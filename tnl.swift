@@ -1,6 +1,9 @@
 import Cocoa
 import ServiceManagement
 
+let currentVersion = "1.0.0"
+let repoOwner = "danpaulson"
+let repoName = "tnl"
 let configPath = NSString(string: "~/.config/tnl/config.json").expandingTildeInPath
 
 struct TunnelConfig: Codable {
@@ -135,6 +138,170 @@ class SettingsWindow: NSWindow {
     }
 }
 
+struct GitHubRelease: Codable {
+    let tag_name: String
+    let assets: [GitHubAsset]
+}
+
+struct GitHubAsset: Codable {
+    let name: String
+    let browser_download_url: String
+}
+
+func compareVersions(_ a: String, _ b: String) -> ComparisonResult {
+    let aParts = a.replacingOccurrences(of: "v", with: "").split(separator: ".").compactMap { Int($0) }
+    let bParts = b.replacingOccurrences(of: "v", with: "").split(separator: ".").compactMap { Int($0) }
+    for i in 0..<max(aParts.count, bParts.count) {
+        let aVal = i < aParts.count ? aParts[i] : 0
+        let bVal = i < bParts.count ? bParts[i] : 0
+        if aVal < bVal { return .orderedAscending }
+        if aVal > bVal { return .orderedDescending }
+    }
+    return .orderedSame
+}
+
+class Updater {
+    static func checkForUpdate(silent: Bool = true, completion: @escaping (GitHubRelease?) -> Void) {
+        let urlStr = "https://api.github.com/repos/\(repoOwner)/\(repoName)/releases/latest"
+        guard let url = URL(string: urlStr) else { completion(nil); return }
+
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            guard let data = data,
+                  let release = try? JSONDecoder().decode(GitHubRelease.self, from: data) else {
+                DispatchQueue.main.async {
+                    if !silent {
+                        let alert = NSAlert()
+                        alert.messageText = "Update Check Failed"
+                        alert.informativeText = "Could not reach GitHub."
+                        alert.runModal()
+                    }
+                    completion(nil)
+                }
+                return
+            }
+
+            let remote = release.tag_name
+            if compareVersions(currentVersion, remote) == .orderedAscending {
+                DispatchQueue.main.async { completion(release) }
+            } else {
+                DispatchQueue.main.async {
+                    if !silent {
+                        let alert = NSAlert()
+                        alert.messageText = "You're up to date"
+                        alert.informativeText = "TNL v\(currentVersion) is the latest version."
+                        alert.runModal()
+                    }
+                    completion(nil)
+                }
+            }
+        }.resume()
+    }
+
+    static func promptAndUpdate(release: GitHubRelease) {
+        let version = release.tag_name.replacingOccurrences(of: "v", with: "")
+        let alert = NSAlert()
+        alert.messageText = "Update Available"
+        alert.informativeText = "TNL v\(version) is available. You have v\(currentVersion).\n\nThe app will quit and relaunch after updating."
+        alert.addButton(withTitle: "Update")
+        alert.addButton(withTitle: "Later")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        guard let dmgAsset = release.assets.first(where: { $0.name.hasSuffix(".dmg") }),
+              let dmgURL = URL(string: dmgAsset.browser_download_url) else {
+            let err = NSAlert()
+            err.messageText = "Update Failed"
+            err.informativeText = "No DMG found in the release."
+            err.runModal()
+            return
+        }
+
+        let downloadAlert = NSAlert()
+        downloadAlert.messageText = "Downloading update..."
+        downloadAlert.informativeText = "Please wait."
+        downloadAlert.addButton(withTitle: "OK")
+        downloadAlert.buttons.first?.isHidden = true
+        let window = downloadAlert.window
+        downloadAlert.layout()
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+
+        URLSession.shared.downloadTask(with: dmgURL) { tempURL, _, error in
+            DispatchQueue.main.async { window.close() }
+
+            guard let tempURL = tempURL, error == nil else {
+                DispatchQueue.main.async {
+                    let err = NSAlert()
+                    err.messageText = "Download Failed"
+                    err.informativeText = error?.localizedDescription ?? "Unknown error"
+                    err.runModal()
+                }
+                return
+            }
+
+            DispatchQueue.main.async {
+                Self.installUpdate(dmgPath: tempURL.path)
+            }
+        }.resume()
+    }
+
+    static func installUpdate(dmgPath: String) {
+        let mountPoint = "/tmp/tnl-update-\(ProcessInfo.processInfo.processIdentifier)"
+        try? FileManager.default.createDirectory(atPath: mountPoint, withIntermediateDirectories: true)
+
+        let mount = Process()
+        mount.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        mount.arguments = ["attach", dmgPath, "-mountpoint", mountPoint, "-nobrowse", "-quiet"]
+        try? mount.run()
+        mount.waitUntilExit()
+
+        guard mount.terminationStatus == 0 else {
+            let alert = NSAlert()
+            alert.messageText = "Update Failed"
+            alert.informativeText = "Could not mount the DMG."
+            alert.runModal()
+            return
+        }
+
+        let appSource = "\(mountPoint)/TNL.app"
+        guard let appBundle = Bundle.main.bundlePath as String?,
+              FileManager.default.fileExists(atPath: appSource) else {
+            let detach = Process()
+            detach.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+            detach.arguments = ["detach", mountPoint, "-quiet"]
+            try? detach.run()
+            let alert = NSAlert()
+            alert.messageText = "Update Failed"
+            alert.informativeText = "Could not find TNL.app in the DMG."
+            alert.runModal()
+            return
+        }
+
+        let appDest = appBundle
+
+        // Write a small script that waits for us to quit, replaces the app, relaunches, and cleans up
+        let script = """
+        #!/bin/bash
+        sleep 1
+        rm -rf "\(appDest)"
+        cp -R "\(appSource)" "\(appDest)"
+        hdiutil detach "\(mountPoint)" -quiet
+        rm -f "\(dmgPath)"
+        open "\(appDest)"
+        """
+
+        let scriptPath = "/tmp/tnl-update.sh"
+        try? script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+
+        let installer = Process()
+        installer.executableURL = URL(fileURLWithPath: "/bin/bash")
+        installer.arguments = [scriptPath]
+        try? installer.run()
+
+        NSApp.terminate(nil)
+    }
+}
+
 class TunnelApp: NSObject, NSApplicationDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     var tunnelProcess: Process?
@@ -150,6 +317,13 @@ class TunnelApp: NSObject, NSApplicationDelegate {
 
         if config.connectOnLaunch {
             connect()
+        }
+
+        // Check for updates silently on launch
+        Updater.checkForUpdate(silent: true) { release in
+            if let release = release {
+                Updater.promptAndUpdate(release: release)
+            }
         }
     }
 
@@ -176,8 +350,14 @@ class TunnelApp: NSObject, NSApplicationDelegate {
         }
 
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates), keyEquivalent: "u"))
         menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
+
+        let versionItem = NSMenuItem(title: "v\(currentVersion)", action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(versionItem)
     }
 
     @objc func connect() {
@@ -231,6 +411,14 @@ class TunnelApp: NSObject, NSApplicationDelegate {
         }
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func checkForUpdates() {
+        Updater.checkForUpdate(silent: false) { release in
+            if let release = release {
+                Updater.promptAndUpdate(release: release)
+            }
+        }
     }
 
     @objc func quit() {

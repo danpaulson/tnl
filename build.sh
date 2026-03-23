@@ -43,8 +43,8 @@ cat > "$APP/Contents/Info.plist" << 'PLIST'
 </plist>
 PLIST
 
-# Ad-hoc code sign
-codesign --force --deep --sign - "$APP"
+# Ad-hoc code sign with entitlements
+codesign --force --deep --sign - --entitlements "$DIR/tnl.entitlements" "$APP"
 
 echo "Built: $APP"
 
