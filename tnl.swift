@@ -1,7 +1,7 @@
 import Cocoa
 import ServiceManagement
 
-let currentVersion = "1.1.1"
+let currentVersion = "1.2.0"
 let repoOwner = "danpaulson"
 let repoName = "tnl"
 let configPath = NSString(string: "~/.config/tnl/config.json").expandingTildeInPath
@@ -309,9 +309,31 @@ class TunnelApp: NSObject, NSApplicationDelegate {
     var config: TunnelConfig!
     var settingsWindow: SettingsWindow?
 
+    func setMenuBarIcon(connected: Bool) {
+        let size: CGFloat = 18
+        let img = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            let cx = rect.midX
+            let cy = rect.midY
+            NSColor.black.setStroke()
+
+            for radius: CGFloat in [7.0, 4.5, 2.0] {
+                let path = NSBezierPath(ovalIn: NSRect(
+                    x: cx - radius, y: cy - radius,
+                    width: radius * 2, height: radius * 2
+                ))
+                path.lineWidth = 1.0
+                path.stroke()
+            }
+            return true
+        }
+        img.isTemplate = true
+        statusItem.button?.image = img
+        statusItem.button?.title = ""
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         config = loadConfig()
-        statusItem.button?.title = "⚡️"
+        setMenuBarIcon(connected: false)
         buildMenu()
         statusItem.menu = menu
 
@@ -379,7 +401,7 @@ class TunnelApp: NSObject, NSApplicationDelegate {
         process.terminationHandler = { [weak self] _ in
             DispatchQueue.main.async {
                 self?.tunnelProcess = nil
-                self?.statusItem.button?.title = "⚡️"
+                self?.setMenuBarIcon(connected: false)
                 self?.buildMenu()
             }
         }
@@ -387,7 +409,7 @@ class TunnelApp: NSObject, NSApplicationDelegate {
         do {
             try process.run()
             tunnelProcess = process
-            statusItem.button?.title = "🟢"
+            setMenuBarIcon(connected: true)
             buildMenu()
         } catch {
             let alert = NSAlert()
@@ -400,7 +422,7 @@ class TunnelApp: NSObject, NSApplicationDelegate {
     @objc func disconnect() {
         tunnelProcess?.terminate()
         tunnelProcess = nil
-        statusItem.button?.title = "⚡️"
+        setMenuBarIcon(connected: false)
         buildMenu()
     }
 

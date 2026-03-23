@@ -11,6 +11,9 @@ VERSION=$(grep '^let currentVersion' "$DIR/tnl.swift" | sed 's/.*"\(.*\)".*/\1/'
 rm -rf "$APP" "$DMG"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
+# Copy icons into Resources
+cp "$DIR/icon.icns" "$APP/Contents/Resources/icon.icns"
+
 # Compile universal binary (Intel + Apple Silicon)
 swiftc "$DIR/tnl.swift" -o "$APP/Contents/MacOS/tnl" -framework Cocoa \
     -target arm64-apple-macosx12.0 -O
@@ -38,6 +41,8 @@ cat > "$APP/Contents/Info.plist" << PLIST
     <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key>
     <string>${VERSION}</string>
+    <key>CFBundleIconFile</key>
+    <string>icon</string>
     <key>LSUIElement</key>
     <true/>
     <key>LSMinimumSystemVersion</key>
