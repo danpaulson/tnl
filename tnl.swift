@@ -314,7 +314,7 @@ class TunnelApp: NSObject, NSApplicationDelegate {
         let img = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             let cx = rect.midX
             let cy = rect.midY
-            NSColor.black.setStroke()
+            (connected ? NSColor.white : NSColor.black).setStroke()
 
             for radius: CGFloat in [7.0, 4.5, 2.0] {
                 let path = NSBezierPath(ovalIn: NSRect(
@@ -324,9 +324,22 @@ class TunnelApp: NSObject, NSApplicationDelegate {
                 path.lineWidth = 1.0
                 path.stroke()
             }
+
+            if connected {
+                let dotRadius: CGFloat = 2.5
+                let dotX = cx + 5.0
+                let dotY = cy + 5.0
+                NSColor(calibratedRed: 0.2, green: 0.8, blue: 0.3, alpha: 1.0).setFill()
+                let dot = NSBezierPath(ovalIn: NSRect(
+                    x: dotX - dotRadius, y: dotY - dotRadius,
+                    width: dotRadius * 2, height: dotRadius * 2
+                ))
+                dot.fill()
+            }
+
             return true
         }
-        img.isTemplate = true
+        img.isTemplate = !connected
         statusItem.button?.image = img
         statusItem.button?.title = ""
     }
@@ -385,10 +398,14 @@ class TunnelApp: NSObject, NSApplicationDelegate {
     @objc func connect() {
         guard tunnelProcess == nil else { return }
 
+        let knownHostsPath = NSString(string: "~/.config/tnl/known_hosts").expandingTildeInPath
         var args = ["-N",
                     "-o", "ExitOnForwardFailure=no",
                     "-o", "ServerAliveInterval=15",
-                    "-o", "ServerAliveCountMax=3"]
+                    "-o", "ServerAliveCountMax=3",
+                    "-o", "UserKnownHostsFile=\(knownHostsPath)",
+                    "-o", "StrictHostKeyChecking=accept-new",
+                    "-o", "IdentityFile=none"]
 
         for port in config.ports {
             args += ["-L", "\(port):localhost:\(port)"]
@@ -398,11 +415,37 @@ class TunnelApp: NSObject, NSApplicationDelegate {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         process.arguments = args
-        process.terminationHandler = { [weak self] _ in
+
+        // Ensure SSH agent socket is available (may not be inherited from Finder launch)
+        var env = ProcessInfo.processInfo.environment
+        if env["SSH_AUTH_SOCK"] == nil {
+            let launchctl = Process()
+            launchctl.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            launchctl.arguments = ["getenv", "SSH_AUTH_SOCK"]
+            let pipe = Pipe()
+            launchctl.standardOutput = pipe
+            try? launchctl.run()
+            launchctl.waitUntilExit()
+            let sock = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !sock.isEmpty { env["SSH_AUTH_SOCK"] = sock }
+        }
+        process.environment = env
+        let errPipe = Pipe()
+        process.standardError = errPipe
+        process.terminationHandler = { [weak self] proc in
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let errMsg = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             DispatchQueue.main.async {
                 self?.tunnelProcess = nil
                 self?.setMenuBarIcon(connected: false)
                 self?.buildMenu()
+                if proc.terminationStatus != 0 && !errMsg.isEmpty {
+                    let alert = NSAlert()
+                    alert.messageText = "Tunnel Disconnected"
+                    alert.informativeText = errMsg
+                    alert.runModal()
+                }
             }
         }
 

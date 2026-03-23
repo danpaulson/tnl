@@ -8,7 +8,7 @@ DMG="$DIR/TNL.dmg"
 # Extract version from source
 VERSION=$(grep '^let currentVersion' "$DIR/tnl.swift" | sed 's/.*"\(.*\)".*/\1/')
 
-rm -rf "$APP" "$DMG"
+rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # Copy icons into Resources
@@ -56,14 +56,16 @@ codesign --force --deep --sign - --entitlements "$DIR/tnl.entitlements" "$APP"
 
 echo "Built: $APP"
 
-# Create DMG
-STAGING="$DIR/.dmg-staging"
-rm -rf "$STAGING"
-mkdir -p "$STAGING"
-cp -R "$APP" "$STAGING/"
-ln -s /Applications "$STAGING/Applications"
+if [ "$1" = "--dmg" ]; then
+    rm -f "$DMG"
+    STAGING="$DIR/.dmg-staging"
+    rm -rf "$STAGING"
+    mkdir -p "$STAGING"
+    cp -R "$APP" "$STAGING/"
+    ln -s /Applications "$STAGING/Applications"
 
-hdiutil create -volname "TNL" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
-rm -rf "$STAGING"
+    hdiutil create -volname "TNL" -srcfolder "$STAGING" -ov -format UDZO "$DMG"
+    rm -rf "$STAGING"
 
-echo "DMG: $DMG"
+    echo "DMG: $DMG"
+fi
