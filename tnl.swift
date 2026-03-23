@@ -1,7 +1,7 @@
 import Cocoa
 import ServiceManagement
 
-let currentVersion = "1.1.0"
+let currentVersion = "1.1.1"
 let repoOwner = "danpaulson"
 let repoName = "tnl"
 let configPath = NSString(string: "~/.config/tnl/config.json").expandingTildeInPath

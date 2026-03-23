@@ -5,6 +5,9 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 APP="$DIR/TNL.app"
 DMG="$DIR/TNL.dmg"
 
+# Extract version from source
+VERSION=$(grep '^let currentVersion' "$DIR/tnl.swift" | sed 's/.*"\(.*\)".*/\1/')
+
 rm -rf "$APP" "$DMG"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
@@ -18,7 +21,7 @@ lipo -create "$APP/Contents/MacOS/tnl" "$APP/Contents/MacOS/tnl-x86" \
 mv "$APP/Contents/MacOS/tnl-universal" "$APP/Contents/MacOS/tnl"
 rm "$APP/Contents/MacOS/tnl-x86"
 
-cat > "$APP/Contents/Info.plist" << 'PLIST'
+cat > "$APP/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -32,9 +35,9 @@ cat > "$APP/Contents/Info.plist" << 'PLIST'
     <key>CFBundleExecutable</key>
     <string>tnl</string>
     <key>CFBundleVersion</key>
-    <string>1.0</string>
+    <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>${VERSION}</string>
     <key>LSUIElement</key>
     <true/>
     <key>LSMinimumSystemVersion</key>
